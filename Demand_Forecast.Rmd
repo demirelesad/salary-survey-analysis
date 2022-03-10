@@ -1,0 +1,420 @@
+
+PAKETLERİ YÜKLEME
+
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyverse)
+```
+
+VERİ OKUTMA
+
+(Müşteri no, Satış tarihi, Ürün no, Satış adedi, Sipariş no ve Satış tarihinin hangi yıl-ay içinde yapıldığını gösteren bir verimiz var. Biz daha çok Zaman Serisi Analizi üzerinden tarihleri ve bağlı satış adetlerini inceleyeceğiz.)
+
+```{r}
+tt <- read.csv("taleptahmin.csv")
+head(tt)
+```
+```{r}
+nrow(tt) # satir kontrolu
+```
+```{r}
+str(tt) 
+```
+```{r}
+class(tt)
+```
+```{r}
+names(tt) 
+```
+```{r}
+summary(tt)
+```
+DEĞİŞKEN İSİMLERİNİ DÜZENLEME
+
+```{r}
+names(tt) <- c("CustomerAccount", "SalesDate", "ProductNumber", "SalesQuantity", "OrderNumber", "Period")
+names(tt)
+
+```
+
+TARİH DEĞİŞKENİNE DATE YAPMA
+
+(Excelden alinan veride kolon genel olarak kaydedilmiştir. Üzerinde tarih işlemleri yapabilmek için as.Date ile tipini düzeltiyoruz.)
+
+```{r}
+tt$SalesDate <- as.Date(tt$SalesDate)
+str(tt$SalesDate)
+```
+
+HİSTOGRAM GRAFİĞİ
+
+```{r}
+hist(tt$SalesQuantity,
+     breaks = 200,
+     xlim = c(-1000,5000),
+     col = c("#d35400" , "#2c3e50" , "#16a085"), #flatuicolors.com dan renk aldik 
+     prob = T) 
+```
+ÜRÜN NUMARALARINA GÖRE SATIŞ ADETLERİ
+
+(Bir ürün üzerinden tahmin yapacağız. En fazla veri satırına sahip veriyi bulmak için table() kullanıyoruz. )
+
+```{r}
+toplam <- tt %>%
+  group_by(ProductNumber)%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+head(toplam)
+
+```
+```{r}
+table(tt$ProductNumber)
+```
+NEGATİF VERİ KONTROLÜ
+
+(Satış adedi negatif olamayacağı için bu verileri giriş hatası olarak kabul ederek verisetinden çıkarıyoruz.)
+
+```{r}
+tt2 <- tt %>%
+  filter(SalesQuantity >= 0 , na.rm = TRUE)
+```
+
+```{r}
+nrow(tt2)  #153688 satir veri
+```
+```{r}
+tt_negatif <- tt %>%
+  filter(SalesQuantity < 0 , na.rm = TRUE)
+nrow(tt_negatif)  #2943 satir veri
+```
+AYKIRI DEĞER KONTROLÜ
+
+(Veri setimizde şirketin normalde gerçekleştirmediği çok uçuk satış adetleri girilmiştir. Kullanıcı hatası olabilir. Tahminleme modeli üzerine çalıştığımız için daha yakın, gerçekçi verilerle çalışmamız gerekir. Bizi yanıltabilecek verileri ayıklamalıyız. Bunun için iki yöntemi inceliyoruz.)
+
+Z değeri ile Aykırı Değer Kontrolü
+
+```{r}
+install.packages("outliers")
+library(outliers)
+```
+
+
+```{r}
+tt2_outliers <- scores(na.omit(tt2$SalesQuantity), type = "z" , prob = 0.95)
+idst1 <- which(tt2_outliers == TRUE)
+```
+
+
+```{r}
+head(na.omit(tt2$SalesQuantity)[idst1]) #1178 satir veri
+```
+```{r}
+min(na.omit(tt2$SalesQuantity)[idst1]) #5500
+max(na.omit(tt2$SalesQuantity)[idst1]) #99000
+```
+(Görüldüğü üzere z değerine göre yapılan analizde, 5500 adetten yukarıda olan satış adetleri aykırı değer olarak belirtildi.)
+
+```{r}
+par(mfrow = c(2,1)) # plot ekranını bölme
+hist(tt2$SalesQuantity, breaks = 50, xlim = c(0,30000), ylim = c(0,1500))
+hist(na.omit(tt2$SalesQuantity)[-idst1], breaks = 50, xlim = c(0,30000), ylim = c(0,1500))# aykırı değerler çıkartılınca
+```
+Boxplot Yöntemine Göre Aykırı Değer Kontrolü
+
+```{r}
+library(rstatix)
+```
+
+```{r}
+tt2_outliers2 <- identify_outliers(tt2[ "SalesQuantity"]) 
+nrow(tt2_outliers2) #20938 satir veri 
+```
+
+```{r}
+min(tt2_outliers2[, "SalesQuantity"]) #539
+max(tt2_outliers2[, "SalesQuantity"]) #99000
+```
+```{r}
+idst2 <- which(tt2_outliers2$is.extreme == TRUE)
+extreme <- tt2_outliers2[idst2 , "SalesQuantity"]
+
+min(extreme) #820
+max(extreme) #99000
+length(extreme)#13005 satir veri
+```
+(Boxplot yöntemine göre aykırı değerler iki farklı gruba ayrıldı. Aykırı değerler ve extreme aykırı değerler. 20938 satır veri aykırı değer olarak algılanırken 13005 satır veri ekstreme aykırı değer olarak belirtildi. Extreme olan aykırı değerlerin minimumu ise 820. 820 şirketin normal olarak alabildiği bir sipariş adedi olduğu için boxplot yöntemi tercih edilmemiştir.)
+
+KAYIP DEĞER KONTROLÜ
+
+```{r}
+idst3 <- which(is.na(tt2)) 
+idst3 # na değeri yok
+```
+```{r}
+nrow(tt2)#153688
+```
+AYKIRI DEĞERLERİ VERİSETİNDEN ÇIKARTMA
+
+```{r}
+tt3 <- tt2[-idst1 , ] #aykiri deger bulunan satirlari cikartma
+nrow(tt3)#151510
+```
+TAMSAYI KONTROLÜ
+
+(Satış adedimiz ondalıklı olamayacağı için veri setinde ondalıklı olarak bulunan satış adetleri giriş hatası olarak belirtilerek çıkarılmıştır.)
+
+```{r}
+tamsayi <- which(tt3$SalesQuantity %% 1 > 0)
+tt3[tamsayi, ] 
+nrow(tt3[tamsayi, ])#587 ondalikli satis adedi
+```
+```{r}
+tt4 <- tt3[-tamsayi, ] #ondalikli degerleri cikartma
+nrow(tt4)#150923 satir veri
+```
+PRD02 ÜRÜNÜ VERİ SETİ İÇİNDE FİLTRELEME
+
+(Tek bir ürün üzerinden inceleme yapılacağı için veri satır sayısına göre seçilip filtrelendi.)
+
+```{r}
+PRD02 <- tt4 %>%
+  filter(ProductNumber == "PRD0002" , na.rm = TRUE)
+nrow(PRD02) #6224 satirlik veri
+```
+```{r}
+plot(PRD02$SalesQuantity ~ PRD02$SalesDate )
+```
+YILLARA GÖRE GRUPLANDIRMA
+
+```{r}
+PRD2014 <- PRD02[PRD02$SalesDate >= "2014-01-01" & PRD02$SalesDate <= "2014-12-31" , c("CustomerAccount" , "SalesDate" , "ProductNumber" , "SalesQuantity" , "OrderNumber" , "Period" )]
+PRD2015 <- PRD02[PRD02$SalesDate >= "2015-01-01" & PRD02$SalesDate <= "2015-12-31" , c("CustomerAccount" , "SalesDate" , "ProductNumber" , "SalesQuantity" , "OrderNumber" , "Period" )]
+PRD2016 <- PRD02[PRD02$SalesDate >= "2016-01-01" & PRD02$SalesDate <= "2016-12-31" , c("CustomerAccount" , "SalesDate" , "ProductNumber" , "SalesQuantity" , "OrderNumber" , "Period" )]
+PRD2017 <- PRD02[PRD02$SalesDate >= "2017-01-01" & PRD02$SalesDate <= "2017-12-31" , c("CustomerAccount" , "SalesDate" , "ProductNumber" , "SalesQuantity" , "OrderNumber" , "Period" )]
+PRD2018 <- PRD02[PRD02$SalesDate >= "2018-01-01" & PRD02$SalesDate <= "2018-12-31" , c("CustomerAccount" , "SalesDate" , "ProductNumber" , "SalesQuantity" , "OrderNumber" , "Period" )]
+PRD2019 <- PRD02[PRD02$SalesDate >= "2019-01-01" & PRD02$SalesDate <= "2019-12-31" , c("CustomerAccount" , "SalesDate" , "ProductNumber" , "SalesQuantity" , "OrderNumber" , "Period" )]
+
+```
+
+YILLARI AYLARA GÖRE GRUPLANDIRMA
+
+```{r}
+sum14 <- PRD2014 %>%
+  group_by(Period)%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+sum15 <- PRD2015 %>%
+  group_by(Period)%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+sum16 <- PRD2016 %>%
+  group_by(Period)%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+sum17 <- PRD2017 %>%
+  group_by(Period)%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+sum18 <- PRD2018 %>%
+  group_by(Period)%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+sum19 <- PRD2019 %>%
+  group_by(Period)%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+```
+
+6 YILI 72 AYA GÖRE GRUPLANDIRMA
+
+```{r}
+sum72 <- PRD02 %>%
+  group_by(Period)%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+sum72$Period <- c(1:72)
+```
+
+YILLAR TOPLAMI
+
+```{r}
+library(lubridate)
+```
+```{r}
+year_sum <- PRD02 %>%
+  group_by(year(SalesDate))%>%
+  summarize(Toplam_Satis = sum(SalesQuantity))
+```
+YILLARA GÖRE SAÇILIM GRAFİĞİ
+
+```{r}
+plot( 1:72 , sum72$Toplam_Satis ,
+      pch = 20 , bty = "L",
+      xlim = c(1 , 72),
+      ylim = c(0 , 160000),
+      main = "Aylara Göre Satış Toplamı",
+      xlab = "Aylar",
+      ylab = "Satış Miktarları"
+)
+```
+BOXPLOT GRAFİĞİ
+
+```{r}
+boxplot(year_sum[ , c("Toplam_Satis")],
+        main = "Yillara Göre Satış Adedinde Uç Yıllar",
+        xlab = "2014-2019 Yıllari",
+        ylab = "Satis Toplamlari",
+        ylim = c(00000 , 600000),
+        col = "orange",
+        border = "black",
+        pch = 19)
+```
+ISI HARİTASI
+
+```{r}
+monthyearsum <- data.frame(
+  aylar = c(1:12),
+  "2014" = sum14$Toplam_Satis,
+  "2015" = sum15$Toplam_Satis,
+  "2016" = sum16$Toplam_Satis,
+  "2017" = sum17$Toplam_Satis,
+  "2018" = sum18$Toplam_Satis,
+  "2019" = sum19$Toplam_Satis
+)
+monthyearmatrix <- as.matrix(monthyearsum)#ısı haritası matrix olmalı
+
+library(RColorBrewer)
+
+heatmap(monthyearmatrix[ , -1 ] , scale = "column",
+        Colv = NA , Rowv = NA, #aylar kolonunu ve dendrogramı çıkarttık
+        cexRow = 1.3,
+        cexCol = 1.3,
+        col = colorRampPalette(brewer.pal(9 , "Blues"))(20))
+legend("bottomright" , legend = c("Min" , "Ort" , "Max"),
+       fill = colorRampPalette(brewer.pal(9 , "Blues"))(3)) # eger r script kullanmiyorsaniz satiri degil chunk'i cagirin
+
+```
+REGRESYON ANALİZİ
+
+```{r}
+PRDmodel <- lm(Toplam_Satis ~ Period , data = sum72)
+summary(PRDmodel)
+```
+MOVING AVERAGE METHOD
+
+```{r}
+library(fpp2)
+library(TTR)
+library(forecast) 
+S <-ts(sum72[,2],start=c(1),frequency=1)
+
+TS <- data.frame(S)    
+
+tttimeseries <- ts(TS)
+
+smatt <- SMA(tttimeseries, 4) # lag is 4    
+
+smatt <- smatt[-c(1:3)]
+
+forecasttt <- forecast(smatt, 3) # future 3 values
+summary(forecasttt)
+
+```
+EXPONENTIAL SMOOTHING METHOD (A,N,N)
+
+```{r}
+Z <-ts(sum72[ ,2], start=c(1),frequency=1)
+head(Z)
+esmtt <- window(Z, end = 60)
+esmtf <- window(Z, start = 61)
+```
+```{r}
+ses.esmt <- ses(esmtt, alpha = .2, h = 12)
+autoplot(ses.esmt)
+```
+```{r}
+esmt.dif <- diff(esmtt)
+autoplot(esmt.dif)
+```
+```{r}
+ses.esmt.dif <- ses(esmt.dif, alpha = .2, h = 12)
+autoplot(ses.esmt.dif)
+```
+```{r}
+esmt.dif.test <- diff(esmtf)
+accuracy(ses.esmt.dif, esmt.dif.test)
+```
+```{r}
+alpha <- seq(.01, .99, by = .01)
+RMSE <- NA
+for(i in seq_along(alpha)) {
+  fit <- ses(esmt.dif, alpha = alpha[i], h = 12)
+  RMSE[i] <- accuracy(fit, esmt.dif.test)[2,2]
+}
+```
+
+Convert to a data frame and identify min alpha value
+
+```{r}
+alpha.fit <- data.frame(alpha, RMSE)
+alpha.min <- filter(alpha.fit, RMSE == min(RMSE))
+is.na(alpha.min)
+
+indexx <- data.frame(
+  alpha = alpha.min[1 , 1],
+  RMSE = alpha.min[1, 2])
+
+```
+
+Plot RMSE vs. alpha
+
+```{r}
+library(ggplot2)
+
+ggplot(alpha.fit, aes(alpha, RMSE)) +
+  geom_line() +
+  geom_point(data = indexx, aes(alpha, RMSE), size = 3, color = "blue") 
+```
+Uygun alpha degerine gore tahminleme
+
+```{r}
+ses.esmt <- ses(esmtt, alpha = alpha.min[1, 1], h = 12)
+autoplot(ses.esmt)
+```
+```{r}
+esmt.dif <- diff(esmtt)
+autoplot(esmt.dif)
+```
+```{r}
+ses.esmt.dif <- ses(esmt.dif, alpha = alpha.min[1, 1], h = 12)
+autoplot(ses.esmt.dif)
+```
+```{r}
+esmt.dif.test <- diff(esmtf)
+accuracy(ses.esmt.dif, esmt.dif.test)
+```
+Holt's exponential smoothing(ciftli ustel duzeltme)
+
+```{r}
+holtesmt <- holt(esmtt, h = 12)
+autoplot(holtesmt)
+```
+```{r}
+holtesmt$model
+
+accuracy(holtesmt, esmtf)
+```
+SEASONAL 
+
+```{r}
+sum72_2 <- cbind(sum72, c(rep(1,3),rep(2,3), rep(3,3), rep(4,3)))
+sum72_3 <- cbind(sum72_2, c(rep(2014,12),rep(2015,12),rep(2016,12),rep(2017,12),rep(2018,12),rep(2019,12)))
+colnames(sum72_3) <- c("Period","Sales","Quarter","Year")
+sum72_3 <- sum72_3[c("Year","Quarter","Period","Sales")]
+
+R <- ts(sum72_3$Sales)
+plot(R , xlim = c(0,84))
+```
+```{r}
+sum72_3$Quarter <- as.factor(sum72_3$Quarter)
+output <- lm(Sales ~ Quarter, data = sum72_3)
+summary(output)
+```
+```{r}
+output2 <- lm(Sales ~ factor(Quarter, exclude = "4"), data = sum72_3)
+summary(output2)
+```
+
